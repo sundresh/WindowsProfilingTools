@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder
+    Author="Custom"
+    Company="Custom"
+    Copyright="(c) 2025"
+    Comments="High-buffer CPU sampling profile"
+    Version="1.0">
+
+  <Profiles>
+
+    <!-- Kernel session with big buffers (512 MB total) -->
+    <SystemCollector
+      Id="CpuWithLargeBuffers_SystemCollector"
+      Name="NT Kernel Logger">
+      <!-- Size of each buffer in KB (1024 KB = 1 MB) -->
+      <BufferSize Value="1024"/>
+      <!-- Number of buffers; 1024 KB * 512 = 512 MB total -->
+      <Buffers Value="512"/>
+    </SystemCollector>
+
+    <!-- System provider for CPU sampling + context switches + thread activity -->
+    <SystemProvider
+      Id="CpuWithLargeBuffers_SystemProvider">
+      <Keywords>
+        <!-- These are the standard CPU / scheduling / loader keywords  -->
+        <Keyword Value="CpuConfig"/>
+        <Keyword Value="SampledProfile"/>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="CSwitch"/>
+        <Keyword Value="Loader"/>
+      </Keywords>
+      <Stacks>
+        <!-- Collect stacks on context switches and samples -->
+        <Stack Value="CSwitch"/>
+        <Stack Value="SampledProfile"/>
+        <Stack Value="ReadyThread"/>
+      </Stacks>
+    </SystemProvider>
+
+    <!-- File-logging profile (what you'll actually use with -filemode) -->
+    <Profile
+      Id="CpuWithLargeBuffers.Verbose.File"
+      Name="CpuWithLargeBuffers"
+      DetailLevel="Verbose"
+      LoggingMode="File"
+      Description="CPU sampling with large kernel buffers (file logging)">
+      <ProblemCategories>
+        <ProblemCategory Value="CPU"/>
+      </ProblemCategories>
+      <Collectors>
+        <SystemCollectorId Value="CpuWithLargeBuffers_SystemCollector">
+          <SystemProviderId Value="CpuWithLargeBuffers_SystemProvider"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+
+    <!-- Required Memory variant (so the .wprp is valid for WPR)  -->
+    <Profile
+      Id="CpuWithLargeBuffers.Verbose.Memory"
+      Name="CpuWithLargeBuffers"
+      DetailLevel="Verbose"
+      LoggingMode="Memory"
+      Description="CPU sampling with large kernel buffers (memory logging)">
+      <ProblemCategories>
+        <ProblemCategory Value="CPU"/>
+      </ProblemCategories>
+      <Collectors>
+        <SystemCollectorId Value="CpuWithLargeBuffers_SystemCollector">
+          <SystemProviderId Value="CpuWithLargeBuffers_SystemProvider"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+
+  </Profiles>
+</WindowsPerformanceRecorder>
