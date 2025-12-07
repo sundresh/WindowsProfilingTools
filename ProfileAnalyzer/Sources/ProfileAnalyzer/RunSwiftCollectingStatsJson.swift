@@ -1,6 +1,7 @@
+import ArgumentParser
 import Foundation
 
-struct RunSwiftCollectingStatsJson {
+struct RunSwiftCollectingStatsJson: ParsableCommand {
     enum RunSwiftCollectingStatsJsonError: Error {
         case directoryExists(directory: URL)
     }
@@ -46,7 +47,7 @@ struct RunSwiftCollectingStatsJson {
         // We use `-j 1` for two reasons:
         // 1. Minimize the effect of concurrent passes on the timing of a pass
         // 2. Avoid differences in what source files' compilations each json file describes duie to job scheduling differences
-        try run("swift", "build", "-j", "1", "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path)
+        try runSubprocess("swift", "build", "-j", "1", "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path)
     }
 
     static func runMultipleSwiftBuilds() throws {

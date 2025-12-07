@@ -1,6 +1,7 @@
+import ArgumentParser
 import Foundation
 
-struct AnalyzeSwiftStatsJson {
+struct AnalyzeSwiftStatsJson: ParsableCommand {
     static func getSourceFileName(jsonFileName: String) -> String {
         var name = jsonFileName
         if let r = name.range(of: #"^stats-\d+-swift-frontend-"#, options: .regularExpression) {
@@ -99,5 +100,28 @@ struct AnalyzeSwiftStatsJson {
     static func writeCsv(toFile url: URL, of rows: [PassWallTimeDistribution]) throws {
         try convertToCsv(rows: rows)
             .write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    func run() {
+        let statsDir = URL(fileURLWithPath: ".")  // TODO: Make this an optional arg
+
+        do {
+            let totalDistributions = try AnalyzeSwiftStatsJson.getTotalWallTimeDistributionsForAllRuns(baseDir: statsDir)
+            print("Total wall time distributions for all runs:")
+            print()
+            print(AnalyzeSwiftStatsJson.convertToCsv(rows: totalDistributions))
+            print()
+
+            for passName in ["Import resolution", "parse-and-resolve-imports", "load-stdlib"] {
+                let passDistributions = try AnalyzeSwiftStatsJson.getPerSourceFileWallTimeDistributionsForAllRuns(passName: passName, baseDir: statsDir)
+                print("\(passName) distributions for all runs:")
+                print()
+                print(AnalyzeSwiftStatsJson.convertToCsv(rows: passDistributions))
+                print()
+            }
+        } catch {
+            print("Error: \(error)\n", stderr)
+            Foundation.exit(1)
+        }
     }
 }

@@ -4,7 +4,7 @@ enum ProcessUtilsError: Error {
     case commandFailed(args: [String], terminationStatus: Int32)    
 }
 
-func run(_ program: String, _ args: String...) throws {
+func runSubprocess(_ program: String, _ args: String...) throws {
     let process = try Process.run(
         URL(fileURLWithPath: program),
         arguments: args
