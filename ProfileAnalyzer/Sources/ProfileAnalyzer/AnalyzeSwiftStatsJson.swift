@@ -29,16 +29,16 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
         return totals
     }
 
-    static func getPerSourceFileWallTimesForOneRun(passName: String, directory: URL) throws -> [String: Double] {
-        var perSourceFile: [String: Double] = [:]
+    static func getperBuildJobWallTimesForOneRun(passName: String, directory: URL) throws -> [String: Double] {
+        var perBuildJob: [String: Double] = [:]
         let keyForPassNameWallTime = "time.swift.\(passName).wall"
         for file in try list(directory: directory) where file.pathExtension == "json" {
             let json = try readJson(fromFile: file)
             if let value = json[keyForPassNameWallTime] {
-                perSourceFile[getSourceFileName(jsonFileName: file.lastPathComponent)] = (value as! Double)
+                perBuildJob[getSourceFileName(jsonFileName: file.lastPathComponent)] = (value as! Double)
             }
         }
-        return perSourceFile
+        return perBuildJob
     }
 
     static func getTotalWallTimesForAllRuns(baseDir: URL) throws -> [[String: Double]] {
@@ -51,14 +51,14 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
         return allTotals
     }
 
-    static func getPerSourceFileWallTimesForAllRuns(passName: String, baseDir: URL) throws -> [[String: Double]] {
-        var allPerSourceFile: [[String: Double]] = []
+    static func getperBuildJobWallTimesForAllRuns(passName: String, baseDir: URL) throws -> [[String: Double]] {
+        var allperBuildJob: [[String: Double]] = []
         for dirEntry in try list(directory: baseDir) {
             if !dirEntry.lastPathComponent.isEmpty && dirEntry.lastPathComponent.allSatisfy({ $0.isNumber }) {
-                allPerSourceFile.append(try getPerSourceFileWallTimesForOneRun(passName: passName, directory: dirEntry))
+                allperBuildJob.append(try getperBuildJobWallTimesForOneRun(passName: passName, directory: dirEntry))
             }
         }
-        return allPerSourceFile
+        return allperBuildJob
     }
 
     struct PassWallTimeDistribution {
@@ -76,9 +76,9 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
         return allDistributions
     }
 
-    static func getPerSourceFileWallTimeDistributionsForAllRuns(passName: String, baseDir: URL) throws -> [PassWallTimeDistribution] {
+    static func getperBuildJobWallTimeDistributionsForAllRuns(passName: String, baseDir: URL) throws -> [PassWallTimeDistribution] {
         var allDistributions: [PassWallTimeDistribution] = []
-        for (passName, value) in transpose(try getPerSourceFileWallTimesForAllRuns(passName: passName, baseDir: baseDir)) {
+        for (passName, value) in transpose(try getperBuildJobWallTimesForAllRuns(passName: passName, baseDir: baseDir)) {
             allDistributions.append(PassWallTimeDistribution(passName: passName, mean: mean(value)!, median: median(value)!, stdDev: stdDev(value)!))
         }
         return allDistributions
@@ -102,22 +102,45 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
             .write(to: url, atomically: true, encoding: .utf8)
     }
 
+    @Option(name: [.short, .long], help: "Directory containing stats json files emitted by Swift compiler")
+    var inputStatsDir: String = "."
+
+    @Option(name: [.short, .long], help: "Directory in which to store CSV files (otherwise write to stdout)")
+    var outputCsvDir: String? = nil
+
+    @Option(name: [.short, .customLong("pass")], help: "Include per build job wall time distribution for a specific pass (repeatable argument)")
+    var passes: [String] = []
+
+    // Example: ProfileAnalyzer analyze-swift-stats-json -i stats2 -p "Import resolution" -p parse-and-resolve-imports -p load-stdlib
     func run() {
-        let statsDir = URL(fileURLWithPath: ".")  // TODO: Make this an optional arg
+        let inputStatsDir = URL(fileURLWithPath: self.inputStatsDir)
+        let outputCsvDir = self.outputCsvDir.map { URL(fileURLWithPath: $0) }
 
         do {
-            let totalDistributions = try AnalyzeSwiftStatsJson.getTotalWallTimeDistributionsForAllRuns(baseDir: statsDir)
-            print("Total wall time distributions for all runs:")
-            print()
-            print(AnalyzeSwiftStatsJson.convertToCsv(rows: totalDistributions))
-            print()
+            let totalDistributions = try AnalyzeSwiftStatsJson.getTotalWallTimeDistributionsForAllRuns(baseDir: inputStatsDir)
+            if let outputCsvDir {
+                try AnalyzeSwiftStatsJson.writeCsv(
+                    toFile: outputCsvDir.appendingPathComponent("total_wall_time_distributions_for_all_runs.csv"),
+                    of: totalDistributions)
+            } else {
+                print("Total wall time distributions for all runs:")
+                print()
+                print(AnalyzeSwiftStatsJson.convertToCsv(rows: totalDistributions))
+                print()
+            }
 
-            for passName in ["Import resolution", "parse-and-resolve-imports", "load-stdlib"] {
-                let passDistributions = try AnalyzeSwiftStatsJson.getPerSourceFileWallTimeDistributionsForAllRuns(passName: passName, baseDir: statsDir)
-                print("\(passName) distributions for all runs:")
-                print()
-                print(AnalyzeSwiftStatsJson.convertToCsv(rows: passDistributions))
-                print()
+            for passName in passes {
+                let passDistributions = try AnalyzeSwiftStatsJson.getperBuildJobWallTimeDistributionsForAllRuns(passName: passName, baseDir: inputStatsDir)
+                if let outputCsvDir {
+                    try AnalyzeSwiftStatsJson.writeCsv(
+                        toFile: outputCsvDir.appendingPathComponent(passName.replacingOccurrences(of: " ", with: "_") + ".csv"),
+                        of: passDistributions)
+                } else {
+                    print("\(passName) distributions for all runs:")
+                    print()
+                    print(AnalyzeSwiftStatsJson.convertToCsv(rows: passDistributions))
+                    print()
+                }
             }
         } catch {
             print("Error: \(error)\n", stderr)
