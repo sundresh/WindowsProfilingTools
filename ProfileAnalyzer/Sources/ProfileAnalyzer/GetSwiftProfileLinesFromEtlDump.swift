@@ -21,7 +21,6 @@ struct GetSwiftProfileLinesFromEtlDump: ParsableCommand {
         // Set up output: stdout or file handle
         let outputHandle: FileHandle
         if let output = outputFilePath {
-            //FileManager.default.createFile(atPath: output, contents: nil)
             guard let h = FileHandle(forWritingAtPath: output) else {
                 throw ValidationError("Failed to open output file: \(output)")
             }
