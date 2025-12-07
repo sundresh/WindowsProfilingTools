@@ -1,16 +1,53 @@
 import Foundation
 
+#if os(Windows)
+let pathEnvVar = "Path"
+let pathEnvVarSeparator = ";"
+let executableFileExtension = ".exe"
+#else
+let pathEnvVar = "PATH"
+let pathEnvVarSeparator = ":"
+let executableFileExtension = ""
+#endif
+
 enum ProcessUtilsError: Error {
-    case commandFailed(args: [String], terminationStatus: Int32)    
+    case commandNotFound(program: String)
+    case commandFailed(args: [String], terminationStatus: Int32)
+}
+
+func findExecutable(_ program: String) -> URL? {
+    if program.contains("/") {
+        return URL(fileURLWithPath: program)
+    }
+
+    let program = program + executableFileExtension
+
+    let paths = (ProcessInfo.processInfo.environment[pathEnvVar] ?? "")
+        .split(separator: pathEnvVarSeparator)
+        .map(String.init)
+
+    for dir in paths {
+        let candidate = URL(fileURLWithPath: dir).appendingPathComponent(program)
+        if FileManager.default.isExecutableFile(atPath: candidate.path) {
+            return candidate
+        }
+    }
+
+    return nil
 }
 
 func runSubprocess(_ program: String, _ args: String...) throws {
+    guard let programPath = findExecutable(program) else {
+        throw ProcessUtilsError.commandNotFound(program: program)
+    }
+
     let process = try Process.run(
-        URL(fileURLWithPath: program),
+        programPath,
         arguments: args
     )
     process.waitUntilExit()
+
     guard process.terminationStatus == 0 else {
-        throw ProcessUtilsError.commandFailed(args: [program] + args, terminationStatus: process.terminationStatus) 
+        throw ProcessUtilsError.commandFailed(args: [programPath.path] + args, terminationStatus: process.terminationStatus) 
     }
 }

@@ -1,8 +1,8 @@
 import ArgumentParser
 import Foundation
 
-struct RunSwiftCollectingStatsJson: ParsableCommand {
-    enum RunSwiftCollectingStatsJsonError: Error {
+struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
+    enum RunSwiftBuildCollectingStatsJsonError: Error {
         case directoryExists(directory: URL)
     }
 
@@ -14,7 +14,7 @@ struct RunSwiftCollectingStatsJson: ParsableCommand {
     ) throws {
         let fm = FileManager.default
 
-        let warmupDir = baseDir.appending(path: "warmup")
+        let warmupDir = baseDir.appendingPathComponent("warmup")
         defer {
             try? fm.removeItem(at: warmupDir)
         }
@@ -28,9 +28,9 @@ struct RunSwiftCollectingStatsJson: ParsableCommand {
                 try? fm.removeItem(at: runDir)
             } else {
                 print("Measured run \(i)...")
-                runDir = baseDir.appending(path: String(i))
+                runDir = baseDir.appendingPathComponent(String(i))
                 if fm.fileExists(atPath: runDir.path) {
-                    throw RunSwiftCollectingStatsJsonError.directoryExists(directory: runDir)
+                    throw RunSwiftBuildCollectingStatsJsonError.directoryExists(directory: runDir)
                 }
             }
 
@@ -50,12 +50,21 @@ struct RunSwiftCollectingStatsJson: ParsableCommand {
         try runSubprocess("swift", "build", "-j", "1", "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path)
     }
 
-    static func runMultipleSwiftBuilds() throws {
-        try invokeRuns(
-            baseDir: URL(fileURLWithPath: "stats"),
-            numWarmupRuns: 2,
-            numMeasuredRuns: 20,
-            runFunction: { try runSwiftBuild(statsDir: $0) }
+    @Option(name: [.short, .long], help: "Directory where Swift compiler should write stats json files")
+    var outputStatsDir: String = "stats"
+
+    @Option(name: [.short, .long], help: "Number of warmup runs before measured runs")
+    var warmupRuns: Int = 2
+
+    @Option(name: [.short, .long], help: "Number of measured runs after warmup runs")
+    var measuredRuns: Int = 20
+
+    func run() throws {
+        try RunSwiftBuildCollectingStatsJson.invokeRuns(
+            baseDir: URL(fileURLWithPath: outputStatsDir).absoluteURL,
+            numWarmupRuns: warmupRuns,
+            numMeasuredRuns: measuredRuns,
+            runFunction: { try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0) }
         )
     }
 }

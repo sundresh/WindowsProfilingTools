@@ -113,8 +113,8 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
 
     // Example: ProfileAnalyzer analyze-swift-stats-json -i stats2 -p "Import resolution" -p parse-and-resolve-imports -p load-stdlib
     func run() {
-        let inputStatsDir = URL(fileURLWithPath: self.inputStatsDir)
-        let outputCsvDir = self.outputCsvDir.map { URL(fileURLWithPath: $0) }
+        let inputStatsDir = URL(fileURLWithPath: self.inputStatsDir).absoluteURL
+        let outputCsvDir = self.outputCsvDir.map { URL(fileURLWithPath: $0).absoluteURL }
 
         do {
             let totalDistributions = try AnalyzeSwiftStatsJson.getTotalWallTimeDistributionsForAllRuns(baseDir: inputStatsDir)
