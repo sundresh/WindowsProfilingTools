@@ -2,11 +2,11 @@ import Foundation
 
 #if os(Windows)
 let pathEnvVar = "Path"
-let pathEnvVarSeparator = ";"
+let pathEnvVarSeparator: Character = ";"
 let executableFileExtension = ".exe"
 #else
 let pathEnvVar = "PATH"
-let pathEnvVarSeparator = ":"
+let pathEnvVarSeparator: Character = ":"
 let executableFileExtension = ""
 #endif
 
