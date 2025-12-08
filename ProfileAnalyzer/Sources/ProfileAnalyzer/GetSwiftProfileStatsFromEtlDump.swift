@@ -1,6 +1,10 @@
 import Foundation
 import ArgumentParser
 
+enum ETLFileError: Error {
+    case traceStartTicksNotFound
+}
+
 struct ProfileSample: Decodable {
     var timeOffset: Int64
     var program: String
@@ -8,60 +12,88 @@ struct ProfileSample: Decodable {
     var numSamples: Int
 }
 
-struct GetSwiftProfileStatsFromEtlDump: ParsableCommand {
+struct ProgramAndFunction: Decodable, Hashable {
+    let program: String
+    let function: String
+}
+
+struct GetSwiftProfileStatsFromETLDump: ParsableCommand {
     @Argument(help: "Path to the ETL dump text file.")
     var etlDumpFilePath: String
 
     func run() throws {
-        var getSwiftProfileSamplesFromEtlDump = GetSwiftProfileSamplesFromEtlDump()
-        let profileSamples = try getSwiftProfileSamplesFromEtlDump.run(etlDumpFilePath: etlDumpFilePath)
+        let swiftEtlDump = try SwiftProfileETLDump(etlDumpFilePath: etlDumpFilePath)
+        var programAndFunctionToNumSamples: [ProgramAndFunction: Int] = [:]
+        var numProgramSamplesSeen = 0
+        for profileSample in try swiftEtlDump.getProfileSamples() {
+            let programName = profileSample.program.split(separator: " ", maxSplits: 1).first.map(String.init) ?? profileSample.program
+            for function in profileSample.stack {
+                programAndFunctionToNumSamples[ProgramAndFunction(program: programName, function: function), default: 0] += profileSample.numSamples
+            }
+            numProgramSamplesSeen += 1
+            if numProgramSamplesSeen % 100 == 0 {
+                print(".", terminator: "")
+            }
+        }
+        print("")
+        for element in programAndFunctionToNumSamples.sorted { $0.value > $1.value }[..<100] {
+            print("\(element.key): \(Double(element.value) / Double(numProgramSamplesSeen) * 100) %")
+        }
     }
 }
 
-struct GetSwiftProfileSamplesFromEtlDump {
-    private enum State {
-        case beforeHeader
-        case needOsVersionLine
-        case scanning
-    }
-
-    private var traceStartTicks: Int64?
-    private var profileSamples: [ProfileSample] = []
-    private var state: State = .beforeHeader
-    private var pendingSample: ProfileSample? = nil
-
+class SwiftProfileETLDump {
     private static let sampledProfileBytes = Data("SampledProfile".utf8)
     private static let stackBytes = Data("Stack".utf8)
     private static let swiftBytes = Data("swift".utf8)
     private static let endHeaderBytes = Data("EndHeader".utf8)
     private static let traceStartPrefix = Data("Trace Start:".utf8)
 
-    mutating func run(etlDumpFilePath: String) throws -> [ProfileSample] {
-        guard let reader = LineReader(path: etlDumpFilePath) else {
+    private var traceStartTicks: Int64
+    private let lineReader: LineReader
+    private var pendingSample: ProfileSample? = nil
+
+    init(etlDumpFilePath: String) throws {
+        guard let lineReader = LineReader(path: etlDumpFilePath) else {
             throw ValidationError("Failed to open file at path: \(etlDumpFilePath)")
         }
-
-        while let line = reader.nextLine() {
-            switch state {
-            case .beforeHeader:
+        self.lineReader = lineReader
+        var inHeader = true
+        var traceStartTicks: Int64?
+        while let line = lineReader.nextLine() {
+            if inHeader {
                 if line.range(of: Self.endHeaderBytes) != nil {
-                    state = .needOsVersionLine
+                    inHeader = false
                 }
-
-            case .needOsVersionLine:
+            } else {
                 if let ticks = Self.extractTraceStartTicks(from: line) {
                     traceStartTicks = ticks
                 }
-                state = .scanning
-
-            case .scanning:
-                processLine(line)
+                break
             }
         }
+        if let traceStartTicks {
+            self.traceStartTicks = traceStartTicks
+        } else {
+            throw ETLFileError.traceStartTicksNotFound
+        }
+    }
 
-        finalizePendingSample()
+    func getProfileSamples() throws -> AnyIterator<ProfileSample> {
+        return AnyIterator {
+            while let line = self.lineReader.nextLine() {
+                if let sample = Self.processLine(line, pendingSample: &self.pendingSample) {
+                    return sample
+                }
+            }
 
-        return profileSamples
+            if let sample = self.pendingSample {
+                self.pendingSample = nil
+                return sample
+            }
+
+            return nil
+        }
     }
 
     private static func extractTraceStartTicks(from line: Data) -> Int64? {
@@ -82,59 +114,70 @@ struct GetSwiftProfileSamplesFromEtlDump {
     }
 
     /// Process a line after the header and OS Version line, building ProfileSample records.
-    private mutating func processLine(_ line: Data) {
+    private static func processLine(_ line: Data, pendingSample: inout ProfileSample?) -> ProfileSample? {
         let columns = splitColumns(line)
         guard columns.count >= 2 else {
-            finalizePendingSample()
-            return
+            return finalizePendingSample(&pendingSample)
         }
 
         let eventType = Self.getDataColumn(columns[0])
 
         guard let timeOffset = Self.parseInt64(Self.getDataColumn(columns[1])) else {
-            finalizePendingSample()
-            return
+            return finalizePendingSample(&pendingSample)
         }
 
-        if let pendingSample, timeOffset != pendingSample.timeOffset {
-            finalizePendingSample()
+        if let sample = pendingSample, timeOffset != sample.timeOffset {
+            return finalizePendingSample(&pendingSample)
         }
 
         if eventType == Self.sampledProfileBytes {
-            finalizePendingSample()
+            if let sample = finalizePendingSample(&pendingSample) {
+                return sample
+            }
             pendingSample = Self.parseSampleProfile(timeOffset: timeOffset, columns: columns)
-        } else if eventType == Self.stackBytes, var pendingSample, timeOffset == pendingSample.timeOffset {
-            Self.appendStackFrames(columns: columns, from: 3, to: &pendingSample.stack)
-            self.pendingSample = pendingSample
-            finalizePendingSample()
+        } else if eventType == Self.stackBytes,
+                  var sample = pendingSample,
+                  timeOffset == sample.timeOffset {
+            appendStackFrames(columns: columns, from: 3, to: &sample.stack)
+            pendingSample = sample
+            return finalizePendingSample(&pendingSample)
         }
+
+        return nil
     }
 
     private static func parseSampleProfile(timeOffset: Int64, columns: [Data.SubSequence]) -> ProfileSample? {
+        guard columns.count > 6 else { return nil }
         let programCol = trimSpaces(columns[2])
         guard programCol.starts(with: swiftBytes) else {
             return nil
         }
 
+        guard let program = getStringColumn(programCol),
+              let firstFrame = getStringColumn(columns[6]),
+              let numSamples = parseInt(columns[columns.count - 2]) else {
+            return nil
+        }
+
         return ProfileSample(
             timeOffset: timeOffset,
-            program: getStringColumn(programCol)!,
-            stack: [getStringColumn(columns[6])!],
-            numSamples: parseInt(columns[columns.count - 2])!
+            program: program,
+            stack: [firstFrame],
+            numSamples: numSamples
         )
     }
 
     private static func appendStackFrames(columns: [Data.SubSequence], from startIndex: Int, to stack: inout [String]) {
         for column in columns[startIndex...] {
-            stack.append(getStringColumn(column)!)
+            if let value = getStringColumn(column) {
+                stack.append(value)
+            }
         }
     }
 
-    private mutating func finalizePendingSample() {
-        if let pendingSample {
-            profileSamples.append(pendingSample)
-        }
-        pendingSample = nil
+    private static func finalizePendingSample(_ pendingSample: inout ProfileSample?) -> ProfileSample? {
+        defer { pendingSample = nil }
+        return pendingSample
     }
 
     private static func parseInt64(_ slice: Data.SubSequence) -> Int64? {

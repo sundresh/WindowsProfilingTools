@@ -1,7 +1,7 @@
 import Foundation
 import ArgumentParser
 
-struct GetSwiftProfileLinesFromEtlDump: ParsableCommand {
+struct GetSwiftProfileLinesFromETLDump: ParsableCommand {
     @Argument(help: "Path to the ETL dump text file.")
     var etlDumpFilePath: String
     @Option(name: [.short, .long])
