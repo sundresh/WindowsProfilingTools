@@ -12,7 +12,14 @@ struct GetSwiftProfileStatsFromEtlDump: ParsableCommand {
     @Argument(help: "Path to the ETL dump text file.")
     var etlDumpFilePath: String
 
-    private enum State: Decodable {
+    func run() throws {
+        var getSwiftProfileSamplesFromEtlDump = GetSwiftProfileSamplesFromEtlDump()
+        let profileSamples = try getSwiftProfileSamplesFromEtlDump.run(etlDumpFilePath: etlDumpFilePath)
+    }
+}
+
+struct GetSwiftProfileSamplesFromEtlDump {
+    private enum State {
         case beforeHeader
         case needOsVersionLine
         case scanning
@@ -29,7 +36,7 @@ struct GetSwiftProfileStatsFromEtlDump: ParsableCommand {
     private static let endHeaderBytes = Data("EndHeader".utf8)
     private static let traceStartPrefix = Data("Trace Start:".utf8)
 
-    mutating func run() throws {
+    mutating func run(etlDumpFilePath: String) throws -> [ProfileSample] {
         guard let reader = LineReader(path: etlDumpFilePath) else {
             throw ValidationError("Failed to open file at path: \(etlDumpFilePath)")
         }
@@ -53,6 +60,8 @@ struct GetSwiftProfileStatsFromEtlDump: ParsableCommand {
         }
 
         finalizePendingSample()
+
+        return profileSamples
     }
 
     private static func extractTraceStartTicks(from line: Data) -> Int64? {
@@ -123,7 +132,6 @@ struct GetSwiftProfileStatsFromEtlDump: ParsableCommand {
 
     private mutating func finalizePendingSample() {
         if let pendingSample {
-            print(pendingSample)
             profileSamples.append(pendingSample)
         }
         pendingSample = nil
