@@ -21,14 +21,26 @@ struct GetSwiftProfileStatsFromETLDump: ParsableCommand {
     @Argument(help: "Path to the ETL dump text file.")
     var etlDumpFilePath: String
 
+    @Option(help: "Show up to the top N most frequently occurring functions in samples")
+    var topN: Int = 100
+
+    @Option(help: "Do not show functions that spend at least a certain percentage of their time directly calling a single other function")
+    var pruneThreshold: Double = 99
+
     func run() throws {
         let swiftEtlDump = try SwiftProfileETLDump(etlDumpFilePath: etlDumpFilePath)
+        // TODO: Combine these dictionaries
         var programAndFunctionToNumSamples: [ProgramAndFunction: Int] = [:]
+        var programAndFunctionToCalledFunctionsToNumSamples: [ProgramAndFunction: [String: Int]] = [:]
         var numProgramSamplesSeen = 0
         for profileSample in try swiftEtlDump.getProfileSamples() {
             let programName = profileSample.program.split(separator: " ", maxSplits: 1).first.map(String.init) ?? profileSample.program
-            for function in profileSample.stack {
-                programAndFunctionToNumSamples[ProgramAndFunction(program: programName, function: function), default: 0] += profileSample.numSamples
+            for (i, function) in profileSample.stack.enumerated() {
+                let programAndFunction = ProgramAndFunction(program: programName, function: function)
+                programAndFunctionToNumSamples[programAndFunction, default: 0] += profileSample.numSamples
+                if i > 0 {
+                    programAndFunctionToCalledFunctionsToNumSamples[programAndFunction, default: [:]][profileSample.stack[i-1], default: 0] += profileSample.numSamples
+                }
             }
             numProgramSamplesSeen += 1
             if numProgramSamplesSeen % 100 == 0 {
@@ -36,8 +48,11 @@ struct GetSwiftProfileStatsFromETLDump: ParsableCommand {
             }
         }
         print("")
-        for element in programAndFunctionToNumSamples.sorted { $0.value > $1.value }[..<100] {
-            print("\(element.key): \(Double(element.value) / Double(numProgramSamplesSeen) * 100) %")
+        for element in programAndFunctionToNumSamples.sorted(by: { $0.value > $1.value })[..<topN] {
+            // Skip if there is a single directly called function that appears in >{pruneThreshold}% of the function's samples.
+            if programAndFunctionToCalledFunctionsToNumSamples[element.key]?.values.max() ?? 0 < element.value - Int(Double(element.value) * (1 - pruneThreshold/100)) {
+                print("\(element.key): \(Double(element.value) / Double(numProgramSamplesSeen) * 100) %")
+            }
         }
     }
 }
