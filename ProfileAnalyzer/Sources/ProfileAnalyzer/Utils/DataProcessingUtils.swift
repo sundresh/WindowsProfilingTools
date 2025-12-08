@@ -29,3 +29,11 @@ func stdDev(_ values: [Double]) -> Double? {
     let variance = values.map { ($0 - m) * ($0 - m) }.reduce(0, +) / Double(values.count)
     return sqrt(variance)
 }
+
+func csvEscape(_ value: String) -> String {
+    if value.contains(",") || value.contains("\"") {
+        "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    } else {
+        value
+    }
+}

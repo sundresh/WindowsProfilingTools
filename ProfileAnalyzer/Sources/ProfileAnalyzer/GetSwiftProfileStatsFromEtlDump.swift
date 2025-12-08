@@ -48,10 +48,13 @@ struct GetSwiftProfileStatsFromETLDump: ParsableCommand {
             }
         }
         print("")
+        print("")
+        print("program,function,frequency")
         for element in programAndFunctionToNumSamples.sorted(by: { $0.value > $1.value })[..<topN] {
             // Skip if there is a single directly called function that appears in >{pruneThreshold}% of the function's samples.
             if programAndFunctionToCalledFunctionsToNumSamples[element.key]?.values.max() ?? 0 < element.value - Int(Double(element.value) * (1 - pruneThreshold/100)) {
-                print("\(element.key): \(Double(element.value) / Double(numProgramSamplesSeen) * 100) %")
+                let frequency = Double(element.value) / Double(numProgramSamplesSeen)
+                print("\(csvEscape(element.key.program)),\(csvEscape(element.key.function)),\(frequency)")
             }
         }
     }
