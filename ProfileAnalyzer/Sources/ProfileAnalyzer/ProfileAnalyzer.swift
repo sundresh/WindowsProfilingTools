@@ -7,6 +7,7 @@ struct ProfileAnalyzer: ParsableCommand {
         subcommands: [
             RunSwiftBuildCollectingStatsJson.self,
             AnalyzeSwiftStatsJson.self,
-            GetSwiftProfileLinesFromEtlDump.self
+            GetSwiftProfileLinesFromEtlDump.self,
+            GetSwiftProfileStatsFromEtlDump.self
         ])
 }
