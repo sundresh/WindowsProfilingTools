@@ -39,15 +39,15 @@ struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
         }
     }
 
-    static func runSwiftBuild(statsDir: URL) throws {
+    static func runSwiftBuild(statsDir: URL, j: Int, numThreads: Int) throws {
         let fm = FileManager.default
         let buildDir = URL(fileURLWithPath: ".build", isDirectory: true)
 
         try? fm.removeItem(at: buildDir)
-        // We use `-j 1` for two reasons:
-        // 1. Minimize the effect of concurrent passes on the timing of a pass
-        // 2. Avoid differences in what source files' compilations each json file describes duie to job scheduling differences
-        try runSubprocess("swift", "build", "-j", "1", "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path)
+        try runSubprocess("swift", "build", "-j", String(j),
+            "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path,
+            "-Xswiftc", "-num-threads", "-Xswiftc", String(numThreads),
+            "-Xswiftc", "-j", "-Xswiftc", String(j))
     }
 
     @Option(name: [.short, .long], help: "Directory where Swift compiler should write stats json files")
@@ -59,12 +59,21 @@ struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
     @Option(name: [.short, .long], help: "Number of measured runs after warmup runs")
     var measuredRuns: Int = 20
 
+    // We default to `-j 1` and `-num-threads 1` for two reasons:
+    // 1. Minimize the effect of concurrent passes on the timing of a pass
+    // 2. (`-j 1` specific) Avoid differences in what source files' compilations each json file describes due to job scheduling differences
+    @Option(name: [.short, .long])
+    var jobs: Int = 1
+
+    @Option(name: [.long])
+    var numThreads: Int = 1
+
     func run() throws {
         try RunSwiftBuildCollectingStatsJson.invokeRuns(
             baseDir: URL(fileURLWithPath: outputStatsDir).absoluteURL,
             numWarmupRuns: warmupRuns,
             numMeasuredRuns: measuredRuns,
-            runFunction: { try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0) }
+            runFunction: { try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0, j: jobs, numThreads: numThreads) }
         )
     }
 }
