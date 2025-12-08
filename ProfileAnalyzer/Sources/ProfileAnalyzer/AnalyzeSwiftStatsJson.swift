@@ -112,39 +112,38 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
     var passes: [String] = []
 
     // Example: ProfileAnalyzer analyze-swift-stats-json -i stats2 -p "Import resolution" -p parse-and-resolve-imports -p load-stdlib
-    func run() {
+    func run() throws {
         let inputStatsDir = URL(fileURLWithPath: self.inputStatsDir).absoluteURL
         let outputCsvDir = self.outputCsvDir.map { URL(fileURLWithPath: $0).absoluteURL }
 
-        do {
-            let totalDistributions = try AnalyzeSwiftStatsJson.getTotalWallTimeDistributionsForAllRuns(baseDir: inputStatsDir)
+        if let outputCsvDir {
+            try FileManager.default.createDirectory(at: outputCsvDir, withIntermediateDirectories: true)
+        }
+
+        let totalDistributions = try AnalyzeSwiftStatsJson.getTotalWallTimeDistributionsForAllRuns(baseDir: inputStatsDir)
+        if let outputCsvDir {
+            try AnalyzeSwiftStatsJson.writeCsv(
+                toFile: outputCsvDir.appendingPathComponent("total_wall_time_distributions_for_all_runs.csv"),
+                of: totalDistributions)
+        } else {
+            print("Total wall time distributions for all runs:")
+            print()
+            print(AnalyzeSwiftStatsJson.convertToCsv(rows: totalDistributions))
+            print()
+        }
+
+        for passName in passes {
+            let passDistributions = try AnalyzeSwiftStatsJson.getperBuildJobWallTimeDistributionsForAllRuns(passName: passName, baseDir: inputStatsDir)
             if let outputCsvDir {
                 try AnalyzeSwiftStatsJson.writeCsv(
-                    toFile: outputCsvDir.appendingPathComponent("total_wall_time_distributions_for_all_runs.csv"),
-                    of: totalDistributions)
+                    toFile: outputCsvDir.appendingPathComponent(passName.replacingOccurrences(of: " ", with: "_") + ".csv"),
+                    of: passDistributions)
             } else {
-                print("Total wall time distributions for all runs:")
+                print("\(passName) distributions for all runs:")
                 print()
-                print(AnalyzeSwiftStatsJson.convertToCsv(rows: totalDistributions))
+                print(AnalyzeSwiftStatsJson.convertToCsv(rows: passDistributions))
                 print()
             }
-
-            for passName in passes {
-                let passDistributions = try AnalyzeSwiftStatsJson.getperBuildJobWallTimeDistributionsForAllRuns(passName: passName, baseDir: inputStatsDir)
-                if let outputCsvDir {
-                    try AnalyzeSwiftStatsJson.writeCsv(
-                        toFile: outputCsvDir.appendingPathComponent(passName.replacingOccurrences(of: " ", with: "_") + ".csv"),
-                        of: passDistributions)
-                } else {
-                    print("\(passName) distributions for all runs:")
-                    print()
-                    print(AnalyzeSwiftStatsJson.convertToCsv(rows: passDistributions))
-                    print()
-                }
-            }
-        } catch {
-            print("Error: \(error)\n", stderr)
-            Foundation.exit(1)
         }
     }
 }
