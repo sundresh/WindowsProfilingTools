@@ -39,16 +39,20 @@ struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
         }
     }
 
-    static func runSwiftBuild(statsDir: URL, j: Int, numThreads: Int) throws {
-        let fm = FileManager.default
-        let buildDir = URL(fileURLWithPath: ".build", isDirectory: true)
+        static func runSwiftBuild(statsDir: URL, j: Int, numThreads: Int, arch: String?) throws {
+            let fm = FileManager.default
+            let buildDir = URL(fileURLWithPath: ".build", isDirectory: true)
 
-        try? fm.removeItem(at: buildDir)
-        try runSubprocess("swift", "build", "-j", String(j),
-            "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path,
-            "-Xswiftc", "-num-threads", "-Xswiftc", String(numThreads),
-            "-Xswiftc", "-j", "-Xswiftc", String(j))
-    }
+            try? fm.removeItem(at: buildDir)
+            var args = ["build", "-j", String(j),
+                "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path,
+                "-Xswiftc", "-num-threads", "-Xswiftc", String(numThreads),
+                "-Xswiftc", "-j", "-Xswiftc", String(j)]
+            if let arch {
+                args += ["--arch", arch]
+            }
+            try runSubprocess("swift", args)
+        }
 
     @Option(name: [.short, .long], help: "Directory where Swift compiler should write stats json files")
     var outputStatsDir: String = "stats"
@@ -68,12 +72,15 @@ struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
     @Option(name: [.long])
     var numThreads: Int = 1
 
+    @Option(name: [.long], help: "Build target architecture")
+    var arch: String?
+
     func run() throws {
         try RunSwiftBuildCollectingStatsJson.invokeRuns(
             baseDir: URL(fileURLWithPath: outputStatsDir).absoluteURL,
             numWarmupRuns: warmupRuns,
             numMeasuredRuns: measuredRuns,
-            runFunction: { try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0, j: jobs, numThreads: numThreads) }
+            runFunction: { try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0, j: jobs, numThreads: numThreads, arch: arch) }
         )
     }
 }

@@ -36,7 +36,7 @@ func findExecutable(_ program: String) -> URL? {
     return nil
 }
 
-func runSubprocess(_ program: String, _ args: String...) throws {
+func runSubprocess(_ program: String, _ args: [String]) throws {
     guard let programPath = findExecutable(program) else {
         throw ProcessUtilsError.commandNotFound(program: program)
     }
@@ -50,4 +50,8 @@ func runSubprocess(_ program: String, _ args: String...) throws {
     guard process.terminationStatus == 0 else {
         throw ProcessUtilsError.commandFailed(args: [programPath.path] + args, terminationStatus: process.terminationStatus) 
     }
+}
+
+func runSubprocess(_ program: String, _ args: String...) throws {
+    try runSubprocess(program, args)
 }
