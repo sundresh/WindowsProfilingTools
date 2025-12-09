@@ -93,7 +93,8 @@ if (-not $SignalFile) {
 }
 
 # Get an absolute path for the trace file
-$fullTracePath = [System.IO.Path]::GetFullPath($TracePath)
+$callerDir = (Get-Location -PSProvider FileSystem).ProviderPath
+$fullTracePath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($callerDir, $TracePath))
 
 Write-Host "Trace will be saved to: $fullTracePath"
 Write-Host "Signal file: $SignalFile"
