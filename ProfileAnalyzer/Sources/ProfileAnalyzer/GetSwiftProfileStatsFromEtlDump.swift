@@ -17,6 +17,11 @@ struct ProgramAndFunction: Decodable, Hashable {
     let function: String
 }
 
+struct ProgramAndFunctionInfo {
+    var numSamples: Int = 0
+    var calledFunctionToNumnSamples: [String: Int] = [:]
+}
+
 struct GetSwiftProfileStatsFromETLDump: ParsableCommand {
     @Argument(help: "Path to the ETL dump text file.")
     var etlDumpFilePath: String
@@ -29,17 +34,15 @@ struct GetSwiftProfileStatsFromETLDump: ParsableCommand {
 
     func run() throws {
         let swiftEtlDump = try SwiftProfileETLDump(etlDumpFilePath: etlDumpFilePath)
-        // TODO: Combine these dictionaries
-        var programAndFunctionToNumSamples: [ProgramAndFunction: Int] = [:]
-        var programAndFunctionToCalledFunctionsToNumSamples: [ProgramAndFunction: [String: Int]] = [:]
+        var programAndFunctionToInfo: [ProgramAndFunction: ProgramAndFunctionInfo] = [:]
         var numProgramSamplesSeen = 0
         for profileSample in try swiftEtlDump.getProfileSamples() {
             let programName = profileSample.program.split(separator: " ", maxSplits: 1).first.map(String.init) ?? profileSample.program
-            for (i, function) in profileSample.stack.enumerated() {
+            for (i, function) in Set(profileSample.stack).enumerated() {
                 let programAndFunction = ProgramAndFunction(program: programName, function: function)
-                programAndFunctionToNumSamples[programAndFunction, default: 0] += profileSample.numSamples
+                programAndFunctionToInfo[programAndFunction, default: ProgramAndFunctionInfo()].numSamples += profileSample.numSamples
                 if i > 0 {
-                    programAndFunctionToCalledFunctionsToNumSamples[programAndFunction, default: [:]][profileSample.stack[i-1], default: 0] += profileSample.numSamples
+                    programAndFunctionToInfo[programAndFunction].calledFunctionToNumnSamples[profileSample.stack[i-1], default: 0] += profileSample.numSamples
                 }
             }
             numProgramSamplesSeen += 1
