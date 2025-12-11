@@ -87,11 +87,7 @@ struct AnalyzeSwiftStatsJson: ParsableCommand {
     static func convertToCsv(rows: [PassWallTimeDistribution]) -> String {
         var csv = "passName,mean,median,stdDev\n"
         for row in rows.sorted(by: { $0.passName < $1.passName }) {
-            // Escape commas / quotes in the pass name if necessary
-            let safeName = row.passName.contains(",") || row.passName.contains("\"")
-                ? "\"\(row.passName.replacingOccurrences(of: "\"", with: "\"\""))\""
-                : row.passName
-
+            let safeName = csvEscape(row.passName)
             csv += "\(safeName),\(row.mean),\(row.median),\(row.stdDev)\n"
         }
         return csv

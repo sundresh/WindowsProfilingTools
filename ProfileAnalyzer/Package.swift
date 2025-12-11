@@ -3,8 +3,17 @@
 
 import PackageDescription
 
+#if arch(arm64)
+let macOSTargetFlag = ["-target", "arm64-apple-macosx10.15.4"]
+#else
+let macOSTargetFlag = ["-target", "x86_64-apple-macosx10.15.4"]
+#endif
+
 let package = Package(
     name: "ProfileAnalyzer",
+    platforms: [
+        .macOS(.v10_15),
+    ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", branch: "main"),
     ],
@@ -14,10 +23,17 @@ let package = Package(
         .executableTarget(
             name: "ProfileAnalyzer",
             dependencies: [.product(name: "ArgumentParser", package: "swift-argument-parser")],
+            swiftSettings: [
+                // macOS 10.15.4 is required for FileHandle read/write availability; Windows remains unaffected.
+                .unsafeFlags(macOSTargetFlag, .when(platforms: [.macOS])),
+            ]
         ),
         .testTarget(
             name: "ProfileAnalyzerTests",
-            dependencies: ["ProfileAnalyzer"]
+            dependencies: ["ProfileAnalyzer"],
+            swiftSettings: [
+                .unsafeFlags(macOSTargetFlag, .when(platforms: [.macOS])),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]
