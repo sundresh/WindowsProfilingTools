@@ -39,20 +39,28 @@ struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
         }
     }
 
-        static func runSwiftBuild(statsDir: URL, j: Int, numThreads: Int, arch: String?) throws {
-            let fm = FileManager.default
-            let buildDir = URL(fileURLWithPath: ".build", isDirectory: true)
+    static func runSwiftBuild(statsDir: URL, j: Int, numThreads: Int, arch: String?) throws {
+        let fm = FileManager.default
+        let buildDir = URL(fileURLWithPath: ".build", isDirectory: true)
 
-            try? fm.removeItem(at: buildDir)
-            var args = ["build", "-j", String(j),
-                "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path,
-                "-Xswiftc", "-num-threads", "-Xswiftc", String(numThreads),
-                "-Xswiftc", "-j", "-Xswiftc", String(j)]
-            if let arch {
-                args += ["--arch", arch]
-            }
-            try runSubprocess("swift", args)
+        try? fm.removeItem(at: buildDir)
+        var args = ["build", "-j", String(j),
+            "-Xswiftc", "-stats-output-dir", "-Xswiftc", statsDir.path,
+            "-Xswiftc", "-num-threads", "-Xswiftc", String(numThreads),
+            "-Xswiftc", "-j", "-Xswiftc", String(j)]
+        if let arch {
+            args += ["--arch", arch]
         }
+        try runSubprocess("swift", args)
+    }
+
+    static func runBuildScript(buildScript: String, statsDir: URL) throws {
+        let fm = FileManager.default
+        let buildDir = URL(fileURLWithPath: ".build", isDirectory: true)
+
+        try? fm.removeItem(at: buildDir)
+        try runSubprocess(buildScript, [statsDir.path])
+    }
 
     @Option(name: [.short, .long], help: "Directory where Swift compiler should write stats json files")
     var outputStatsDir: String = "stats"
@@ -75,12 +83,21 @@ struct RunSwiftBuildCollectingStatsJson: ParsableCommand {
     @Option(name: [.long], help: "Build target architecture")
     var arch: String?
 
+    @Option(name: [.short, .long], help: "Build script to run; passes it the stats json output dir as an argument")
+    var buildScript: String?
+
     func run() throws {
         try RunSwiftBuildCollectingStatsJson.invokeRuns(
             baseDir: URL(fileURLWithPath: outputStatsDir).absoluteURL,
             numWarmupRuns: warmupRuns,
             numMeasuredRuns: measuredRuns,
-            runFunction: { try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0, j: jobs, numThreads: numThreads, arch: arch) }
+            runFunction: {
+                if let buildScript = self.buildScript {
+                    try RunSwiftBuildCollectingStatsJson.runBuildScript(buildScript: buildScript, statsDir: $0)
+                } else {
+                    try RunSwiftBuildCollectingStatsJson.runSwiftBuild(statsDir: $0, j: jobs, numThreads: numThreads, arch: arch)
+                }
+            }
         )
     }
 }
