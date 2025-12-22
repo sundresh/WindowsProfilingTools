@@ -1,5 +1,5 @@
 {
-  "originHash" : "b77c231967a7e69fc91d19eb7b3e5de28ca2abab0bd766678ce9a3baf21ff0db",
+  "originHash" : "f5d150d1a01d082b6545e6a2c0556116103421088aee76bdf66e51fa01177747",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -8,15 +8,6 @@
       "state" : {
         "branch" : "main",
         "revision" : "1fb5308335f6eba91aed9764525542a48780c428"
-      }
-    },
-    {
-      "identity" : "xmlcoder",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/CoreOffice/XMLCoder",
-      "state" : {
-        "revision" : "b1e944cbd0ef33787b13f639a5418d55b3bed501",
-        "version" : "0.17.1"
       }
     }
   ],

@@ -1,72 +1,72 @@
 import Testing
 import Foundation
 @testable import ProfileAnalyzer
+import Darwin
 
-@Test func testSAXParser() async throws {
-    let url = URL(fileURLWithPath: "/Users/sameer.sundresh/bydate/2025/12/11/symbolicated_trace.xml")
+let instrumentsTraceXMLFile = "symbolicated_trace.xml"
 
-    let start = CFAbsoluteTimeGetCurrent()
-    let trace = try InstrumentsTrace(from: url, strategy: .sax)
-    let elapsed = CFAbsoluteTimeGetCurrent() - start
-
-    print("SAX: Parsed \(trace.samples.count) samples in \(String(format: "%.2f", elapsed)) seconds")
-
-    #expect(trace.samples.count > 0)
-
-    if let first = trace.samples.first {
-        print("First sample: time=\(first.time.formatted), process=\(first.process.name), pid=\(first.process.pid)")
+/// Returns the current memory usage in bytes using mach_task_info
+func getCurrentMemoryUsage() -> UInt64 {
+    var info = mach_task_basic_info()
+    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+    let result = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+            task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+        }
     }
-    if let last = trace.samples.last {
-        print("Last sample: time=\(last.time.formatted), process=\(last.process.name), pid=\(last.process.pid)")
-    }
-
-    // Check reference sharing works (same process object should be reused)
-    let processes = Set(trace.samples.map { ObjectIdentifier($0.process) })
-    print("Unique process objects: \(processes.count)")
+    return result == KERN_SUCCESS ? info.resident_size : 0
 }
 
-@Test func testDOMParser() async throws {
-    let url = URL(fileURLWithPath: "/Users/sameer.sundresh/bydate/2025/12/11/symbolicated_trace.xml")
-
-    let start = CFAbsoluteTimeGetCurrent()
-    let trace = try InstrumentsTrace(from: url, strategy: .dom)
-    let elapsed = CFAbsoluteTimeGetCurrent() - start
-
-    print("DOM: Parsed \(trace.samples.count) samples in \(String(format: "%.2f", elapsed)) seconds")
-
-    #expect(trace.samples.count > 0)
-
-    if let first = trace.samples.first {
-        print("First sample: time=\(first.time.formatted), process=\(first.process.name), pid=\(first.process.pid)")
+/// Formats bytes as a human-readable string
+func formatBytes(_ bytes: UInt64) -> String {
+    let mb = Double(bytes) / (1024 * 1024)
+    if mb >= 1024 {
+        return String(format: "%.2f GB", mb / 1024)
     }
-    if let last = trace.samples.last {
-        print("Last sample: time=\(last.time.formatted), process=\(last.process.name), pid=\(last.process.pid)")
-    }
-
-    // Check reference sharing works
-    let processes = Set(trace.samples.map { ObjectIdentifier($0.process) })
-    print("Unique process objects: \(processes.count)")
+    return String(format: "%.1f MB", mb)
 }
 
-@Test func testXMLDecoderParser() async throws {
-    let url = URL(fileURLWithPath: "/Users/sameer.sundresh/bydate/2025/12/11/symbolicated_trace.xml")
+/// Parses the test XML file and reports time and memory usage.
+@Test(.disabled("Requires a symbolicated XML trace from Instruments"))
+func testParse() async throws {
+    let url = URL(fileURLWithPath: instrumentsTraceXMLFile)
 
+    // Force GC before measuring
+    autoreleasepool {
+        let _ = [Int](repeating: 0, count: 1000)
+    }
+
+    let memBefore = getCurrentMemoryUsage()
     let start = CFAbsoluteTimeGetCurrent()
-    let trace = try InstrumentsTrace(from: url, strategy: .xmlDecoder)
-    let elapsed = CFAbsoluteTimeGetCurrent() - start
 
-    print("XMLDecoder: Parsed \(trace.samples.count) samples in \(String(format: "%.2f", elapsed)) seconds")
+    let trace = try InstrumentsTrace(from: url)
+
+    let elapsed = CFAbsoluteTimeGetCurrent() - start
+    let memAfter = getCurrentMemoryUsage()
+    let memUsed = memAfter > memBefore ? memAfter - memBefore : 0
+
+    print("Parse: \(trace.samples.count) samples, \(String(format: "%.2f", elapsed))s, mem: +\(formatBytes(memUsed))")
 
     #expect(trace.samples.count > 0)
+}
 
-    if let first = trace.samples.first {
-        print("First sample: time=\(first.time.formatted), process=\(first.process.name), pid=\(first.process.pid)")
-    }
-    if let last = trace.samples.last {
-        print("Last sample: time=\(last.time.formatted), process=\(last.process.name), pid=\(last.process.pid)")
+/// Parses the test XML file with a process filter and reports time and memory usage.
+@Test(.disabled("Requires a symbolicated XML trace from Instruments"))
+func testParseFiltered() async throws {
+    let url = URL(fileURLWithPath: instrumentsTraceXMLFile)
+
+    let memBefore = getCurrentMemoryUsage()
+    let start = CFAbsoluteTimeGetCurrent()
+
+    let trace = try InstrumentsTrace(from: url) { process in
+        process.name.localizedCaseInsensitiveContains("swift")
     }
 
-    // Check reference sharing works
-    let processes = Set(trace.samples.map { ObjectIdentifier($0.process) })
-    print("Unique process objects: \(processes.count)")
+    let elapsed = CFAbsoluteTimeGetCurrent() - start
+    let memAfter = getCurrentMemoryUsage()
+    let memUsed = memAfter > memBefore ? memAfter - memBefore : 0
+
+    print("Parse filtered: \(trace.samples.count) samples, \(String(format: "%.2f", elapsed))s, mem: +\(formatBytes(memUsed))")
+
+    #expect(trace.samples.count > 0)
 }
