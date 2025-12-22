@@ -168,76 +168,129 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
         super.init()
     }
 
-    // ID -> object lookup tables for ref resolution
-    // Always cached (small objects, needed for ref resolution across rows)
+    // MARK: - Builder Structs (mirror final class field order)
+
+    /// Builder for Binary: name, uuid, arch, loadAddress, path
+    private struct BinaryBuilder {
+        var id: String?
+        var name: String?
+        var uuid: String?
+        var arch: String?
+        var loadAddress: String?
+        var path: String?
+
+        mutating func reset() {
+            id = nil; name = nil; uuid = nil; arch = nil; loadAddress = nil; path = nil
+        }
+    }
+
+    /// Builder for Frame: name, address, binary, source
+    private struct FrameBuilder {
+        var id: String?
+        var name: String?
+        var address: String?
+        var binary: Binary?
+        var source: SourceLocation?
+
+        mutating func reset() {
+            id = nil; name = nil; address = nil; binary = nil; source = nil
+        }
+    }
+
+    /// Builder for Backtrace: frames
+    private struct BacktraceBuilder {
+        var id: String?
+        var frames: [Frame] = []
+
+        mutating func reset() {
+            id = nil; frames.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// Builder for SampledProcess: name, pid
+    private struct ProcessBuilder {
+        var id: String?
+        var name: String?
+        var pid: Int?
+
+        mutating func reset() {
+            id = nil; name = nil; pid = nil
+        }
+    }
+
+    /// Builder for SampledThread: name, tid, process
+    private struct ThreadBuilder {
+        var id: String?
+        var name: String?
+        var tid: Int?
+        var process: SampledProcess?
+
+        mutating func reset() {
+            id = nil; name = nil; tid = nil; process = nil
+        }
+    }
+
+    /// Current row fields matching Sample: time, thread, process, core, threadState, weight, backtrace
+    private struct RowBuilder {
+        var time: SampleTime?
+        var thread: SampledThread?
+        var process: SampledProcess?
+        var core: Core?
+        var threadState: ThreadState?
+        var weight: Weight?
+        var backtrace: Backtrace?
+        var hasSentinel: Bool = false
+
+        mutating func reset() {
+            time = nil; thread = nil; process = nil; core = nil
+            threadState = nil; weight = nil; backtrace = nil; hasSentinel = false
+        }
+    }
+
+    // MARK: - ID -> Object Caches
+
+    // Always cached (small objects needed for ref resolution across rows)
     private var sampleTimeById: [String: SampleTime] = [:]
-    private var threadById: [String: SampledThread] = [:]
     private var processById: [String: SampledProcess] = [:]
-    private var weightById: [String: Weight] = [:]
+    private var threadById: [String: SampledThread] = [:]
     private var coreById: [String: Core] = [:]
     private var threadStateById: [String: ThreadState] = [:]
+    private var weightById: [String: Weight] = [:]
     private var binaryById: [String: Binary] = [:]
     private var sourcePathById: [String: String] = [:]
 
     // Large objects - only cached for matching processes when filter is set
-    private var backtraceById: [String: Backtrace] = [:]
     private var frameById: [String: Frame] = [:]
+    private var backtraceById: [String: Backtrace] = [:]
 
     // Pending cache entries for large objects (committed only if process matches filter)
-    private var pendingBacktraceCache: (String, Backtrace)?
     private var pendingFrameCaches: [(String, Frame)] = []
+    private var pendingBacktraceCache: (String, Backtrace)?
 
-    // Element stack for tracking nesting
+    // MARK: - Parser State
+
     private var elementStack: [String] = []
     private var currentText = ""
+    private var parseError: Error?
 
-    // Track if we're inside a thread element (optimization: avoid scanning stack)
-    private var parsingThreadDepth = 0
+    // Track nesting depth inside thread element (to know if process belongs to thread)
+    private var threadNestingDepth = 0
 
-    // Current row being parsed
-    private var currentRowSampleTime: SampleTime?
-    private var currentRowThread: SampledThread?
-    private var currentRowProcess: SampledProcess?
-    private var currentRowCore: Core?
-    private var currentRowThreadState: ThreadState?
-    private var currentRowWeight: Weight?
-    private var currentRowBacktrace: Backtrace?
-    private var currentRowHasSentinel = false
-
-    // Current element attributes (saved when element starts)
+    // Pending id/fmt for simple elements (sample-time, core, thread-state, weight, path)
     private var pendingId: String?
     private var pendingFmt: String?
-    private var pendingBinaryName: String?
-    private var pendingBinaryUUID: String?
-    private var pendingBinaryArch: String?
-    private var pendingBinaryLoadAddr: String?
-    private var pendingBinaryPath: String?
+
+    // Pending source line (for building SourceLocation)
     private var pendingSourceLine: Int?
 
-    // Current backtrace being built
-    private var currentBacktraceFrames: [Frame] = []
-    private var currentBacktraceId: String?
+    // MARK: - Current Builders
 
-    // Current frame being built
-    private var currentFrameBinary: Binary?
-    private var currentFrameSource: SourceLocation?
-    private var currentFrameId: String?
-    private var currentFrameName: String?
-    private var currentFrameAddr: String?
-
-    // Current thread being built
-    private var currentThreadId: String?
-    private var currentThreadFmt: String?
-    private var currentThreadTid: Int?
-    private var currentThreadProcess: SampledProcess?
-
-    // Current process being built (when nested in thread)
-    private var currentProcessId: String?
-    private var currentProcessFmt: String?
-    private var currentProcessPid: Int?
-
-    // Error tracking
-    private var parseError: Error?
+    private var currentRow = RowBuilder()
+    private var currentProcess = ProcessBuilder()
+    private var currentThread = ThreadBuilder()
+    private var currentBacktrace = BacktraceBuilder()
+    private var currentFrame = FrameBuilder()
+    private var currentBinary = BinaryBuilder()
 
     func parse(url: URL) throws {
         guard let parser = XMLParser(contentsOf: url) else {
@@ -280,51 +333,48 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
 
         case "sample-time":
             if let ref = ref, let existing = sampleTimeById[ref] {
-                currentRowSampleTime = existing
+                currentRow.time = existing
             } else {
                 pendingId = id
                 pendingFmt = fmt
             }
 
         case "thread":
-            parsingThreadDepth += 1
+            threadNestingDepth += 1
             if let ref = ref, let existing = threadById[ref] {
-                currentRowThread = existing
+                currentRow.thread = existing
             } else {
-                currentThreadId = id
-                currentThreadFmt = fmt
-                currentThreadTid = nil
-                currentThreadProcess = nil
+                currentThread.id = id
+                currentThread.name = fmt
+                currentThread.tid = nil
+                currentThread.process = nil
             }
 
         case "tid":
-            pendingId = id
-            pendingFmt = fmt
+            break  // Text content parsed in didEndElement
 
         case "process":
             if let ref = ref, let existing = processById[ref] {
-                // Process reference
-                if parsingThreadDepth > 0 {
-                    currentThreadProcess = existing
+                if threadNestingDepth > 0 {
+                    currentThread.process = existing
                 } else {
-                    currentRowProcess = existing
+                    currentRow.process = existing
                 }
             } else {
-                currentProcessId = id
-                currentProcessFmt = fmt
-                currentProcessPid = nil
+                currentProcess.id = id
+                currentProcess.name = fmt
+                currentProcess.pid = nil
             }
 
         case "pid":
-            pendingId = id
+            break  // Text content parsed in didEndElement
 
         case "device-session":
-            // We skip device-session as it's always "TODO" per the spec
-            break
+            break  // Skipped - always "TODO" per spec
 
         case "core":
             if let ref = ref, let existing = coreById[ref] {
-                currentRowCore = existing
+                currentRow.core = existing
             } else {
                 pendingId = id
                 pendingFmt = fmt
@@ -332,15 +382,14 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
 
         case "thread-state":
             if let ref = ref, let existing = threadStateById[ref] {
-                currentRowThreadState = existing
+                currentRow.threadState = existing
             } else {
                 pendingId = id
-                pendingFmt = fmt
             }
 
         case "weight":
             if let ref = ref, let existing = weightById[ref] {
-                currentRowWeight = existing
+                currentRow.weight = existing
             } else {
                 pendingId = id
                 pendingFmt = fmt
@@ -348,36 +397,36 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
 
         case "backtrace":
             if let ref = ref, let existing = backtraceById[ref] {
-                currentRowBacktrace = existing
+                currentRow.backtrace = existing
             } else {
-                currentBacktraceId = id
-                currentBacktraceFrames.removeAll(keepingCapacity: true)
+                currentBacktrace.id = id
+                currentBacktrace.frames.removeAll(keepingCapacity: true)
             }
 
         case "sentinel":
-            currentRowHasSentinel = true
+            currentRow.hasSentinel = true
 
         case "frame":
             if let ref = ref, let existing = frameById[ref] {
-                currentBacktraceFrames.append(existing)
+                currentBacktrace.frames.append(existing)
             } else {
-                currentFrameId = id
-                currentFrameName = attributeDict["name"]
-                currentFrameAddr = attributeDict["addr"]
-                currentFrameBinary = nil
-                currentFrameSource = nil
+                currentFrame.id = id
+                currentFrame.name = attributeDict["name"]
+                currentFrame.address = attributeDict["addr"]
+                currentFrame.binary = nil
+                currentFrame.source = nil
             }
 
         case "binary":
             if let ref = ref, let existing = binaryById[ref] {
-                currentFrameBinary = existing
+                currentFrame.binary = existing
             } else {
-                pendingId = id
-                pendingBinaryName = attributeDict["name"]
-                pendingBinaryUUID = attributeDict["UUID"]
-                pendingBinaryArch = attributeDict["arch"]
-                pendingBinaryLoadAddr = attributeDict["load-addr"]
-                pendingBinaryPath = attributeDict["path"]
+                currentBinary.id = id
+                currentBinary.name = attributeDict["name"]
+                currentBinary.uuid = attributeDict["UUID"]
+                currentBinary.arch = attributeDict["arch"]
+                currentBinary.loadAddress = attributeDict["load-addr"]
+                currentBinary.path = attributeDict["path"]
             }
 
         case "source":
@@ -386,10 +435,9 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
             }
 
         case "path":
-            // Source path element - check for ref
             if let ref = ref, let existing = sourcePathById[ref] {
                 if let line = pendingSourceLine {
-                    currentFrameSource = SourceLocation(path: existing, line: line)
+                    currentFrame.source = SourceLocation(path: existing, line: line)
                 }
             } else {
                 pendingId = id
@@ -416,14 +464,14 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
             finalizeCurrentRow()
 
         case "sample-time":
-            if currentRowSampleTime == nil {
+            if currentRow.time == nil {
                 let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let nanoseconds = UInt64(text) {
                     let sampleTime = SampleTime(nanoseconds: nanoseconds, formatted: pendingFmt ?? "")
                     if let id = pendingId {
                         sampleTimeById[id] = sampleTime
                     }
-                    currentRowSampleTime = sampleTime
+                    currentRow.time = sampleTime
                 }
             }
             clearPending()
@@ -431,123 +479,103 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
         case "tid":
             let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
             if let tid = Int(text) {
-                currentThreadTid = tid
+                currentThread.tid = tid
             }
-            clearPending()
 
         case "pid":
             let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
             if let pid = Int(text) {
-                currentProcessPid = pid
+                currentProcess.pid = pid
             }
-            clearPending()
 
         case "process":
-            if currentProcessId != nil {
-                // We're finishing a process definition
-                let process = SampledProcess(name: currentProcessFmt ?? "", pid: currentProcessPid ?? 0)
-                if let id = currentProcessId {
+            if currentProcess.id != nil {
+                let process = SampledProcess(name: currentProcess.name ?? "", pid: currentProcess.pid ?? 0)
+                if let id = currentProcess.id {
                     processById[id] = process
                 }
-                if parsingThreadDepth > 0 {
-                    currentThreadProcess = process
+                if threadNestingDepth > 0 {
+                    currentThread.process = process
                 } else {
-                    currentRowProcess = process
+                    currentRow.process = process
                 }
             }
-            currentProcessId = nil
-            currentProcessFmt = nil
-            currentProcessPid = nil
+            currentProcess.reset()
 
         case "thread":
-            if currentThreadId != nil {
-                // We're finishing a thread definition
-                let process = currentThreadProcess ?? SampledProcess(name: "", pid: 0)
-                let thread = SampledThread(name: currentThreadFmt ?? "", tid: currentThreadTid ?? 0, process: process)
-                if let id = currentThreadId {
+            if currentThread.id != nil {
+                let process = currentThread.process ?? SampledProcess(name: "", pid: 0)
+                let thread = SampledThread(name: currentThread.name ?? "", tid: currentThread.tid ?? 0, process: process)
+                if let id = currentThread.id {
                     threadById[id] = thread
                 }
-                currentRowThread = thread
+                currentRow.thread = thread
             }
-            currentThreadId = nil
-            currentThreadFmt = nil
-            currentThreadTid = nil
-            currentThreadProcess = nil
-            parsingThreadDepth -= 1
+            currentThread.reset()
+            threadNestingDepth -= 1
 
         case "core":
-            if currentRowCore == nil {
+            if currentRow.core == nil {
                 let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let number = Int(text) {
                     let core = Core(number: number, name: pendingFmt ?? "")
                     if let id = pendingId {
                         coreById[id] = core
                     }
-                    currentRowCore = core
+                    currentRow.core = core
                 }
             }
             clearPending()
 
         case "thread-state":
-            if currentRowThreadState == nil {
+            if currentRow.threadState == nil {
                 let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
                 let threadState = ThreadState(state: text)
                 if let id = pendingId {
                     threadStateById[id] = threadState
                 }
-                currentRowThreadState = threadState
+                currentRow.threadState = threadState
             }
             clearPending()
 
         case "weight":
-            if currentRowWeight == nil {
+            if currentRow.weight == nil {
                 let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let nanoseconds = UInt64(text) {
                     let weight = Weight(nanoseconds: nanoseconds, formatted: pendingFmt ?? "")
                     if let id = pendingId {
                         weightById[id] = weight
                     }
-                    currentRowWeight = weight
+                    currentRow.weight = weight
                 }
             }
             clearPending()
 
         case "binary":
-            if currentFrameBinary == nil && pendingBinaryName != nil {
-                let loadAddr: UInt64?
-                if let addrStr = pendingBinaryLoadAddr {
-                    loadAddr = parseHexOrDecimal(addrStr)
-                } else {
-                    loadAddr = nil
-                }
+            if currentFrame.binary == nil && currentBinary.name != nil {
+                let loadAddr = currentBinary.loadAddress.flatMap { parseHexOrDecimal($0) }
                 let binary = Binary(
-                    name: pendingBinaryName ?? "",
-                    uuid: pendingBinaryUUID,
-                    arch: pendingBinaryArch,
+                    name: currentBinary.name ?? "",
+                    uuid: currentBinary.uuid,
+                    arch: currentBinary.arch,
                     loadAddress: loadAddr,
-                    path: pendingBinaryPath
+                    path: currentBinary.path
                 )
-                if let id = pendingId {
+                if let id = currentBinary.id {
                     binaryById[id] = binary
                 }
-                currentFrameBinary = binary
+                currentFrame.binary = binary
             }
-            clearPending()
-            pendingBinaryName = nil
-            pendingBinaryUUID = nil
-            pendingBinaryArch = nil
-            pendingBinaryLoadAddr = nil
-            pendingBinaryPath = nil
+            currentBinary.reset()
 
         case "path":
-            // Source path text
             let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
                 if let id = pendingId {
                     sourcePathById[id] = text
                 }
                 if let line = pendingSourceLine {
-                    currentFrameSource = SourceLocation(path: text, line: line)
+                    currentFrame.source = SourceLocation(path: text, line: line)
                 }
             }
             clearPending()
@@ -556,37 +584,31 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
             pendingSourceLine = nil
 
         case "frame":
-            if currentFrameId != nil {
-                // We're finishing a frame definition
-                let address = parseHexOrDecimal(currentFrameAddr ?? "0") ?? 0
+            if currentFrame.id != nil {
+                let address = parseHexOrDecimal(currentFrame.address ?? "0") ?? 0
                 let frame = Frame(
-                    name: currentFrameName ?? "",
+                    name: currentFrame.name ?? "",
                     address: address,
-                    binary: currentFrameBinary,
-                    source: currentFrameSource
+                    binary: currentFrame.binary,
+                    source: currentFrame.source
                 )
-                if let id = currentFrameId {
+                if let id = currentFrame.id {
                     pendingFrameCaches.append((id, frame))
                 }
-                currentBacktraceFrames.append(frame)
+                currentBacktrace.frames.append(frame)
             }
-            currentFrameId = nil
-            currentFrameName = nil
-            currentFrameAddr = nil
-            currentFrameBinary = nil
-            currentFrameSource = nil
+            currentFrame.reset()
 
         case "backtrace":
-            if currentBacktraceId != nil {
-                // We're finishing a backtrace definition
-                let backtrace = Backtrace(frames: currentBacktraceFrames)
-                if let id = currentBacktraceId {
+            if currentBacktrace.id != nil {
+                let backtrace = Backtrace(frames: currentBacktrace.frames)
+                if let id = currentBacktrace.id {
                     pendingBacktraceCache = (id, backtrace)
                 }
-                currentRowBacktrace = backtrace
+                currentRow.backtrace = backtrace
             }
-            currentBacktraceId = nil
-            // Don't clear frames here - removeAll(keepingCapacity:) is called at start
+            currentBacktrace.id = nil
+            // Don't reset frames - removeAll(keepingCapacity:) called at start
 
         default:
             break
@@ -600,31 +622,22 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
     // MARK: - Helpers
 
     private func resetCurrentRow() {
-        currentRowSampleTime = nil
-        currentRowThread = nil
-        currentRowProcess = nil
-        currentRowCore = nil
-        currentRowThreadState = nil
-        currentRowWeight = nil
-        currentRowBacktrace = nil
-        currentRowHasSentinel = false
-
-        // Reset pending caches for large objects
-        pendingBacktraceCache = nil
+        currentRow.reset()
         pendingFrameCaches.removeAll(keepingCapacity: true)
+        pendingBacktraceCache = nil
     }
 
     private func finalizeCurrentRow() {
-        guard let time = currentRowSampleTime,
-              let thread = currentRowThread,
-              let core = currentRowCore,
-              let threadState = currentRowThreadState,
-              let weight = currentRowWeight else {
+        guard let time = currentRow.time,
+              let thread = currentRow.thread,
+              let core = currentRow.core,
+              let threadState = currentRow.threadState,
+              let weight = currentRow.weight else {
             return
         }
 
         // Process can come from thread or directly from row
-        let process = currentRowProcess ?? thread.process
+        let process = currentRow.process ?? thread.process
 
         // Apply process filter if present
         if let filter = processFilter, !filter(process) {
@@ -633,15 +646,15 @@ private final class InstrumentsTraceXMLParser: NSObject, XMLParserDelegate {
         }
 
         // Process matches filter (or no filter) - commit pending large object caches
-        for (id, obj) in pendingFrameCaches {
-            frameById[id] = obj
+        for (id, frame) in pendingFrameCaches {
+            frameById[id] = frame
         }
-        if let (id, obj) = pendingBacktraceCache {
-            backtraceById[id] = obj
+        if let (id, backtrace) = pendingBacktraceCache {
+            backtraceById[id] = backtrace
         }
 
         // Backtrace is nil if we saw a sentinel
-        let backtrace = currentRowHasSentinel ? nil : currentRowBacktrace
+        let backtrace = currentRow.hasSentinel ? nil : currentRow.backtrace
 
         let sample = Sample(
             time: time,
