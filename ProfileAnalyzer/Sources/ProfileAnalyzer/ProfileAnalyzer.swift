@@ -8,6 +8,7 @@ struct ProfileAnalyzer: ParsableCommand {
             RunSwiftBuildCollectingStatsJson.self,
             AnalyzeSwiftStatsJson.self,
             GetSwiftProfileLinesFromETLDump.self,
-            GetSwiftProfileStatsFromETLDump.self
+            GetSwiftProfileStatsFromETLDump.self,
+            GetSwiftProfileStatsFromInstrumentsTrace.self
         ])
 }
