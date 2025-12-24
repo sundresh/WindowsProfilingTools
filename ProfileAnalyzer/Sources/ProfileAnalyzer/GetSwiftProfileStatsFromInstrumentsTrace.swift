@@ -38,13 +38,16 @@ struct GetSwiftProfileStatsFromInstrumentsTrace: ParsableCommand {
 
         // Parse trace, filtering to swift processes
         let trace = try InstrumentsTrace(from: url) { process in
-            process.name.localizedCaseInsensitiveContains("swiftc") || process.name.localizedCaseInsensitiveContains("swift-driver") || process.name.localizedCaseInsensitiveContains("swift-frontend")
+            process.name.localizedCaseInsensitiveContains("swiftc")
+            || process.name.localizedCaseInsensitiveContains("swift-driver")
+            || process.name.localizedCaseInsensitiveContains("swift-frontend")
+            || process.name.localizedCaseInsensitiveContains("Unknown")
         }
 
         print("Loaded \(trace.samples.count) samples from swift processes")
 
         // First pass: collect all unsymbolicated addresses grouped by binary
-        // Key: (binaryPath, loadAddress), Value: set of addresses to symbolicate
+        // Key: binaryPath, Value: set of addresses to symbolicate (normalized by subtracting load address)
         var addressesByBinary: [BinaryKey: Set<UInt64>] = [:]
 
         for sample in trace.samples {
@@ -59,8 +62,11 @@ struct GetSwiftProfileStatsFromInstrumentsTrace: ParsableCommand {
                     continue
                 }
 
-                let binaryKey = BinaryKey(path: binaryPath, loadAddress: loadAddress)
-                addressesByBinary[binaryKey, default: []].insert(frame.address)
+                if binaryPath.localizedCaseInsensitiveContains("swift") {
+                    let binaryKey = BinaryKey(path: binaryPath)
+                    let normalizedAddress = frame.address - loadAddress
+                    addressesByBinary[binaryKey, default: []].insert(normalizedAddress)
+                }
             }
         }
 
@@ -71,7 +77,6 @@ struct GetSwiftProfileStatsFromInstrumentsTrace: ParsableCommand {
         for (binaryKey, addresses) in addressesByBinary {
             let symbolicated = batchSymbolicate(
                 binaryPath: binaryKey.path,
-                loadAddress: binaryKey.loadAddress,
                 addresses: Array(addresses)
             )
             for (address, name) in symbolicated {
@@ -120,7 +125,8 @@ struct GetSwiftProfileStatsFromInstrumentsTrace: ParsableCommand {
                 // Apply symbolication from the pre-built map
                 let functionName: String
                 if isUnsymbolicated(frame.name), !binaryPath.isEmpty {
-                    let symbolicationKey = SymbolicationKey(binaryPath: binaryPath, address: frame.address)
+                    let normalizedAddress = frame.address - loadAddress
+                    let symbolicationKey = SymbolicationKey(binaryPath: binaryPath, address: normalizedAddress)
                     functionName = symbolicationMap[symbolicationKey] ?? frame.name
                 } else {
                     functionName = frame.name
@@ -149,10 +155,12 @@ struct GetSwiftProfileStatsFromInstrumentsTrace: ParsableCommand {
                 // We want to track what this function calls, which is frames[i-1] if it exists
                 if frameIndex > 0 {
                     let calledBinaryPath = frames[frameIndex - 1].binary?.path ?? ""
+                    let calledLoadAddress = frames[frameIndex - 1].binary?.loadAddress ?? 0
                     let calledFrameName = frames[frameIndex - 1].name
                     let calledFunction: String
                     if isUnsymbolicated(calledFrameName), !calledBinaryPath.isEmpty {
-                        let calledSymbolicationKey = SymbolicationKey(binaryPath: calledBinaryPath, address: frames[frameIndex - 1].address)
+                        let calledNormalizedAddress = frames[frameIndex - 1].address - calledLoadAddress
+                        let calledSymbolicationKey = SymbolicationKey(binaryPath: calledBinaryPath, address: calledNormalizedAddress)
                         calledFunction = symbolicationMap[calledSymbolicationKey] ?? calledFrameName
                     } else {
                         calledFunction = calledFrameName
@@ -333,10 +341,9 @@ private struct CoalescedKey: Hashable {
     let binaryPath: String
 }
 
-/// Key for grouping addresses by binary (path + load address)
+/// Key for grouping addresses by binary path
 private struct BinaryKey: Hashable {
     let path: String
-    let loadAddress: UInt64
 }
 
 private struct CalledFunctionStats {
@@ -371,18 +378,35 @@ private func isUnsymbolicated(_ name: String) -> Bool {
 /// Batch symbolicate multiple addresses for a single binary using atos
 /// - Parameters:
 ///   - binaryPath: Path to the binary
-///   - loadAddress: Load address of the binary
-///   - addresses: Array of addresses to symbolicate
+///   - addresses: Array of addresses to symbolicate (already normalized by subtracting load address)
 /// - Returns: Dictionary mapping addresses to symbolicated names (only includes successful symbolicaitons)
-private func batchSymbolicate(binaryPath: String, loadAddress: UInt64, addresses: [UInt64]) -> [UInt64: String] {
+private func batchSymbolicate(binaryPath: String, addresses: [UInt64]) -> [UInt64: String] {
     guard !binaryPath.isEmpty, !addresses.isEmpty else {
         return [:]
     }
 
-    // Build arguments: atos -o <binary> -l <load_address> <addr1> <addr2> ...
+    var result: [UInt64: String] = [:]
+    let batchSize = 500
+
+    // Process addresses in batches of up to 500 at a time
+    for batchStart in stride(from: 0, to: addresses.count, by: batchSize) {
+        let batchEnd = min(batchStart + batchSize, addresses.count)
+        let batch = Array(addresses[batchStart..<batchEnd])
+
+        let batchResult = symbolicateBatch(binaryPath: binaryPath, addresses: batch)
+        result.merge(batchResult) { _, new in new }
+    }
+
+    return result
+}
+
+/// Symbolicate a single batch of addresses using atos
+private func symbolicateBatch(binaryPath: String, addresses: [UInt64]) -> [UInt64: String] {
+    // Build arguments: atos -o <binary> -l 0 <addr1> <addr2> ...
+    // Addresses are already normalized (load address subtracted), so we use load address 0
     var arguments = [
         "-o", binaryPath,
-        "-l", String(format: "0x%llx", loadAddress)
+        "-l", "0x0"
     ]
     arguments.append(contentsOf: addresses.map { String(format: "0x%llx", $0) })
 
