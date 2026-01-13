@@ -3,7 +3,7 @@
     Author="Custom"
     Company="Custom"
     Copyright="(c) 2025"
-    Comments="High-buffer CPU sampling profile"
+    Comments="High-buffer CPU sampling profile with wait and I/O analysis"
     Version="1.0">
 
   <Profiles>
@@ -12,40 +12,54 @@
     <SystemCollector
       Id="CpuWithLargeBuffers_SystemCollector"
       Name="NT Kernel Logger">
-      <!-- Size of each buffer in KB (1024 KB = 1 MB) -->
       <BufferSize Value="1024"/>
-      <!-- Number of buffers; 1024 KB * 512 = 512 MB total -->
       <Buffers Value="512"/>
     </SystemCollector>
 
-    <!-- System provider for CPU sampling + context switches + thread activity -->
+    <!-- System provider for CPU sampling + context switches + thread activity + I/O -->
     <SystemProvider
       Id="CpuWithLargeBuffers_SystemProvider">
       <Keywords>
-        <!-- These are the standard CPU / scheduling / loader keywords  -->
+        <!-- CPU / scheduling / loader keywords -->
         <Keyword Value="CpuConfig"/>
         <Keyword Value="SampledProfile"/>
         <Keyword Value="ProcessThread"/>
         <Keyword Value="CSwitch"/>
         <Keyword Value="Loader"/>
+        <!-- ADDED: Required for wait analysis -->
+        <Keyword Value="ReadyThread"/>
+        <!-- ADDED: File and Disk I/O -->
+        <Keyword Value="DiskIO"/>
+        <Keyword Value="FileIO"/>
+        <Keyword Value="FileIOInit"/>
+        <Keyword Value="HardFaults"/>
       </Keywords>
       <Stacks>
-        <!-- Collect stacks on context switches and samples -->
+        <!-- CPU and scheduling stacks -->
         <Stack Value="CSwitch"/>
         <Stack Value="SampledProfile"/>
         <Stack Value="ReadyThread"/>
+        <!-- ADDED: I/O stacks -->
+        <Stack Value="DiskReadInit"/>
+        <Stack Value="DiskWriteInit"/>
+        <Stack Value="DiskFlushInit"/>
+        <Stack Value="FileCreate"/>
+        <Stack Value="FileRead"/>
+        <Stack Value="FileWrite"/>
+        <Stack Value="FileQueryInformation"/>
       </Stacks>
     </SystemProvider>
 
-    <!-- File-logging profile (what you'll actually use with -filemode) -->
+    <!-- File-logging profile -->
     <Profile
       Id="CpuWithLargeBuffers.Verbose.File"
       Name="CpuWithLargeBuffers"
       DetailLevel="Verbose"
       LoggingMode="File"
-      Description="CPU sampling with large kernel buffers (file logging)">
+      Description="CPU sampling with large kernel buffers, wait analysis, and I/O (file logging)">
       <ProblemCategories>
         <ProblemCategory Value="CPU"/>
+        <ProblemCategory Value="IO"/>
       </ProblemCategories>
       <Collectors>
         <SystemCollectorId Value="CpuWithLargeBuffers_SystemCollector">
@@ -54,15 +68,16 @@
       </Collectors>
     </Profile>
 
-    <!-- Required Memory variant (so the .wprp is valid for WPR)  -->
+    <!-- Required Memory variant -->
     <Profile
       Id="CpuWithLargeBuffers.Verbose.Memory"
       Name="CpuWithLargeBuffers"
       DetailLevel="Verbose"
       LoggingMode="Memory"
-      Description="CPU sampling with large kernel buffers (memory logging)">
+      Description="CPU sampling with large kernel buffers, wait analysis, and I/O (memory logging)">
       <ProblemCategories>
         <ProblemCategory Value="CPU"/>
+        <ProblemCategory Value="IO"/>
       </ProblemCategories>
       <Collectors>
         <SystemCollectorId Value="CpuWithLargeBuffers_SystemCollector">

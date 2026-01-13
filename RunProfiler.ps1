@@ -52,7 +52,7 @@ if ($ElevatedHelper) {
         # === Elevated helper branch (runs as Administrator) ===
         Write-Host "[Elevated] Starting WPR collection..."
 
-        $wprp_file_path = Join-Path ([System.IO.Path]::GetDirectoryName($scriptPath)) "CpuWithLargeBuffers.wprp"
+        $wprp_file_path = Join-Path ([System.IO.Path]::GetDirectoryName($scriptPath)) "CpuAndWaitsWithLargeBuffers.wprp"
         wpr -start "$wprp_file_path!CpuWithLargeBuffers" -filemode
         if ($LASTEXITCODE -ne 0) {
             Write-Error "[Elevated] Failed to start WPR. Exit code: $LASTEXITCODE"
